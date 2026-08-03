@@ -12,6 +12,47 @@ const logger = createLogger('Zhihu')
 // js-md5 导出的是函数本身
 const jsMd5 = md5Lib as unknown as (message: string | ArrayBuffer | Uint8Array) => string
 
+function decodeHtmlAttribute(value: string): string {
+  return value.replace(/&(?:#(\d+)|#x([\da-f]+)|(amp|lt|gt|quot|apos|nbsp));/gi, (entity, decimal, hex, named) => {
+    if (decimal) return String.fromCodePoint(Number.parseInt(decimal, 10))
+    if (hex) return String.fromCodePoint(Number.parseInt(hex, 16))
+    return {
+      amp: '&',
+      lt: '<',
+      gt: '>',
+      quot: '"',
+      apos: "'",
+      nbsp: ' ',
+    }[String(named).toLowerCase()] ?? entity
+  })
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+/** Convert extracted MathJax SVG wrappers to Zhihu's native equation image. */
+export function transformZhihuMath(content: string): string {
+  return content.replace(
+    /<(span|p|div|section)\b([^>]*\bdata-math-raw=(['"])(.*?)\3[^>]*)>[\s\S]*?<\/\1>/gi,
+    (_match, _tag, attrs, _quote, encodedTex) => {
+      const display = /\bdata-math-display=(['"])true\1/i.test(attrs)
+      const tex = decodeHtmlAttribute(encodedTex).trim()
+      const equationTex = display && !/^\\displaystyle\b/.test(tex)
+        ? `\\displaystyle ${tex}`
+        : tex
+      const equationUrl = `https://www.zhihu.com/equation?tex=${encodeURIComponent(equationTex)}`
+      const displayStyle = display ? ' style="display: block; margin: 0 auto; max-width: 100%;"' : ''
+      const equation = `<img class="Formula-image" data-eeimg="true" eeimg="1" src="${equationUrl}" alt="${escapeHtmlAttribute(tex)}"${displayStyle}>`
+      return display ? `<p>${equation}</p>` : equation
+    }
+  )
+}
+
 export class ZhihuAdapter extends CodeAdapter {
   readonly meta: PlatformMeta = {
     id: 'zhihu',
@@ -209,9 +250,13 @@ export class ZhihuAdapter extends CodeAdapter {
       '<pre lang="$1"><code>'
     )
 
-    // 4. 移除微信样式属性 (但保留知乎的 data-draft-* 属性)
-    result = result.replace(/\s*data-(?!draft)[a-z-]+="[^"]*"/gi, '')
+    // 4. 清理普通内容属性。data-math-* 暂时保留给下一步公式转换。
+    result = result.replace(/\s*data-(?!draft(?:-[a-z-]+)?=|eeimg=|math-(?:raw|display)=)[a-z-]+="[^"]*"/gi, '')
     result = result.replace(/\s*style="[^"]*"/gi, '')
+
+    // 5. 最后生成知乎公式节点，让行间公式的块级样式不再被上一步删除。
+    // 此时普通图片已经包裹完成，公式图片不会被错误包进 figure。
+    result = transformZhihuMath(result)
 
     return result
   }

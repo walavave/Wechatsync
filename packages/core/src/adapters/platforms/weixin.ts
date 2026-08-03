@@ -18,6 +18,13 @@ interface WeixinMeta {
   avatar: string
 }
 
+interface WeixinMaterialUpload {
+  url: string
+  url235?: string
+  url1?: string
+  backupUrl?: string
+}
+
 // 微信公众号的默认 CSS 样式
 const WEIXIN_CSS = `
 p {
@@ -35,14 +42,36 @@ h3 { font-size: 1.05em; margin: 0.8em 0 0.4em 0; }
 h4, h5, h6 { font-size: 1em; margin: 0.8em 0 0.4em 0; }
 li p { margin: 0; }
 ul, ol { margin: 1em 0; padding-left: 2em; }
-li { margin-bottom: 0.4em; }
+li { color: rgb(51, 51, 51); font-size: 15px; line-height: 1.75em; margin-bottom: 0.4em; }
+figure-caption, figcaption, .figure-caption { color: rgb(102, 102, 102); font-size: 14px; text-align: center;}
 pre, tt, code, kbd, samp { font-family: monospace; }
 pre { white-space: pre; margin: 1em 0; }
 blockquote { border-left: 4px solid #ddd; padding-left: 1em; margin: 1em 0; color: #666; }
 hr { border: none; border-top: 1px solid #ddd; margin: 1.5em 0; }
 i, cite, em, var, address { font-style: italic; }
 b, strong { font-weight: bolder; }
+.katex-block { max-width: 100%; overflow-x: auto; padding: 0.5em 0; text-align: center; }
 `
+
+const BLOCK_LIST_ITEM_CONTENT = /<(?:p|div|section|article|ul|ol|pre|blockquote|table|h[1-6]|figure)\b/i
+
+/**
+ * WeChat's editor normalizes bare inline nodes inside a list item inconsistently,
+ * especially when one of them is an SVG. Give simple list items one explicit
+ * paragraph while leaving rich or nested list items unchanged.
+ */
+export function normalizeWeixinListItems(content: string): string {
+  return content.replace(
+    /<li\b([^>]*)>(?:(?!<li\b|<\/li\b)[\s\S])*<\/li>/gi,
+    (item) => item.replace(
+      /^(<li\b[^>]*>)([\s\S]*)(<\/li>)$/i,
+      (_match, open, inner, close) => {
+        if (!inner.trim() || BLOCK_LIST_ITEM_CONTENT.test(inner)) return item
+        return `${open}<p>${inner}</p>${close}`
+      }
+    )
+  )
+}
 
 export class WeixinAdapter extends CodeAdapter {
   readonly meta: PlatformMeta = {
@@ -50,7 +79,7 @@ export class WeixinAdapter extends CodeAdapter {
     name: '微信公众号',
     icon: 'https://mp.weixin.qq.com/favicon.ico',
     homepage: 'https://mp.weixin.qq.com',
-    capabilities: ['article', 'draft', 'image_upload'],
+    capabilities: ['article', 'draft', 'image_upload', 'cover'],
   }
 
   /** 预处理配置: 微信公众号使用 HTML 格式，移除非微信域名链接，压缩标签间空白避免 ProseMirror 产生空节点 */
@@ -164,6 +193,17 @@ export class WeixinAdapter extends CodeAdapter {
         content = this.processContent(content)
       }
 
+      let cover: WeixinMaterialUpload | undefined
+      if (article.cover) {
+        try {
+          cover = await this.uploadCoverByUrl(article.cover)
+          logger.info('Cover uploaded to WeChat material service')
+        } catch (error) {
+          // A failed cover must not discard an otherwise valid article draft.
+          logger.warn('Failed to upload cover; publishing without a cover:', error)
+        }
+      }
+
       const formData = new URLSearchParams({
         token: this.weixinMeta!.token,
         lang: 'zh_CN',
@@ -189,10 +229,10 @@ export class WeixinAdapter extends CodeAdapter {
         sourceurl0: '',
         need_open_comment0: '1',
         only_fans_can_comment0: '0',
-        cdn_url0: '',
-        cdn_235_1_url0: '',
-        cdn_1_1_url0: '',
-        cdn_url_back0: '',
+        cdn_url0: cover?.url || '',
+        cdn_235_1_url0: cover?.url235 || cover?.url || '',
+        cdn_1_1_url0: cover?.url1 || '',
+        cdn_url_back0: cover?.backupUrl || '',
         crop_list0: '',
         music_id0: '',
         video_id0: '',
@@ -203,7 +243,7 @@ export class WeixinAdapter extends CodeAdapter {
         cardquantity0: '',
         cardlimit0: '',
         vid_type0: '',
-        show_cover_pic0: '0',
+        show_cover_pic0: cover ? '1' : '0',
         shortvideofileid0: '',
         copyright_type0: '0',
         releasefirst0: '',
@@ -269,6 +309,15 @@ export class WeixinAdapter extends CodeAdapter {
   }
 
   protected async uploadImageByUrl(src: string): Promise<ImageUploadResult> {
+    const result = await this.uploadWeixinMaterialByUrl(src)
+    return { url: result.url }
+  }
+
+  private async uploadCoverByUrl(src: string): Promise<WeixinMaterialUpload> {
+    return this.uploadWeixinMaterialByUrl(src)
+  }
+
+  private async uploadWeixinMaterialByUrl(src: string): Promise<WeixinMaterialUpload> {
     if (!this.weixinMeta) {
       throw new Error('未登录')
     }
@@ -304,6 +353,10 @@ export class WeixinAdapter extends CodeAdapter {
 
     const res = await response.json() as {
       cdn_url?: string
+      cdn_235_1_url?: string
+      cdn_url_235_1?: string
+      cdn_1_1_url?: string
+      cdn_url_back?: string
       content?: string
       base_resp?: { err_msg: string; ret: number }
     }
@@ -316,6 +369,9 @@ export class WeixinAdapter extends CodeAdapter {
 
     return {
       url: res.cdn_url,
+      url235: res.cdn_235_1_url || res.cdn_url_235_1,
+      url1: res.cdn_1_1_url,
+      backupUrl: res.cdn_url_back,
     }
   }
 
@@ -330,12 +386,14 @@ export class WeixinAdapter extends CodeAdapter {
     const LATEX_API = 'https://latex.codecogs.com/png.latex'
 
     content = content.replace(/\$\$([^$]+)\$\$/g, (match, latex) => {
+      latex = latex.replace(/\\quad\b/g, '')
       if (!this.isLatexFormula(latex)) return match
       const encoded = encodeURIComponent(latex.trim())
       return `<p style="text-align: center;"><img src="${LATEX_API}?\\dpi{150}${encoded}" alt="formula" style="vertical-align: middle; max-width: 100%;"></p>`
     })
 
     content = content.replace(/\$([^$]+)\$/g, (match, latex) => {
+      latex = latex.replace(/\\quad\b/g, '')
       if (!this.isLatexFormula(latex)) return match
       const encoded = encodeURIComponent(latex.trim())
       return `<img src="${LATEX_API}?\\dpi{120}${encoded}" alt="formula" style="vertical-align: middle;">`
@@ -345,7 +403,8 @@ export class WeixinAdapter extends CodeAdapter {
   }
 
   private processContent(content: string): string {
-    const wrapped = `<section style="margin-left: 6px; margin-right: 6px; line-height: 1.75em;">${content}</section>`
+    const normalized = normalizeWeixinListItems(content)
+    const wrapped = `<section style="margin-left: 6px; margin-right: 6px; line-height: 1.75em;">${normalized}</section>`
     return juice.inlineContent(wrapped, WEIXIN_CSS)
   }
 

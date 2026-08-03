@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import { SyncDialog } from '@/components/sync-dialog'
 import type { Platform, SyncResult, PlatformProgress } from '@/components/sync-dialog/types'
 import { createLogger } from '../lib/logger'
+import { renderExtractedMath } from './mathjax'
 
 const logger = createLogger('Editor')
 
@@ -64,9 +65,6 @@ export function EditorApp() {
 
         if (data.type === 'ARTICLE_DATA') {
           setArticle(data.article)
-          if (contentRef.current && data.article.content) {
-            contentRef.current.innerHTML = data.article.content
-          }
         } else if (data.type === 'PLATFORMS_DATA') {
           setPlatforms(data.platforms)
           if (data.selectedPlatformIds && data.selectedPlatformIds.length > 0) {
@@ -126,6 +124,16 @@ export function EditorApp() {
     return () => window.removeEventListener('message', handleMessage)
   }, [])
 
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content || !article?.content) return
+
+    content.innerHTML = article.content
+    void renderExtractedMath(content).catch((e) => {
+      logger.error('Failed to render article formulas:', e)
+    })
+  }, [article?.content])
+
   // Auto-detect completion from results
   useEffect(() => {
     if (status === 'syncing' && results.length > 0 && results.length >= selectedPlatforms.length) {
@@ -138,7 +146,7 @@ export function EditorApp() {
   }, [])
 
   // Get edited article content
-  const getEditedArticle = useCallback(() => {
+  const getEditedArticle = useCallback(async () => {
     if (!article) return null
     return {
       ...article,
@@ -171,8 +179,12 @@ export function EditorApp() {
     saveSelectedPlatforms([])
   }
 
-  const handleStartSync = () => {
-    const editedArticle = getEditedArticle()
+  const handleStartSync = async () => {
+    const editedArticle = await getEditedArticle().catch((e) => {
+      logger.error('Failed to prepare article formulas:', e)
+      setError('公式渲染失败，请稍后重试')
+      return null
+    })
     if (!editedArticle || selectedPlatforms.length === 0) return
 
     const syncId = `sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -190,11 +202,15 @@ export function EditorApp() {
     }), '*')
   }
 
-  const handleRetryFailed = () => {
+  const handleRetryFailed = async () => {
     const failedPlatforms = results.filter(r => !r.success).map(r => r.platform)
     if (failedPlatforms.length === 0) return
 
-    const editedArticle = getEditedArticle()
+    const editedArticle = await getEditedArticle().catch((e) => {
+      logger.error('Failed to prepare article formulas:', e)
+      setError('公式渲染失败，请稍后重试')
+      return null
+    })
     if (!editedArticle) return
 
     const syncId = `sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -337,6 +353,9 @@ export function EditorApp() {
             .article-content hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
             .article-content strong { font-weight: 600; }
             .article-content em { font-style: italic; }
+            .article-content .katex-block { max-width: 100%; margin: 0.5em 0; padding: 0; line-height: 1; text-align: center; }
+            .article-content .katex-pending { color: #777; font-size: 0.875em; }
+            .article-content .katex-block svg { width: auto; max-width: 100%; height: auto; margin: 0; overflow: visible; }
           `}</style>
         </article>
       </main>

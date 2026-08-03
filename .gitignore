@@ -37,3 +37,5 @@ packages/core/src/adapters/platforms/xiaohongshu.ts
 packages/core/src/adapters/platforms/x.ts
 packages/core/src/content/
 packages/extension/src/content/xiaohongshu.ts
+
+md-main

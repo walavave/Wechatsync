@@ -188,6 +188,9 @@ importers:
       lucide-react:
         specifier: ^0.303.0
         version: 0.303.0(react@18.3.1)
+      mathjax:
+        specifier: ^3.2.2
+        version: 3.2.2
       react:
         specifier: ^18.2.0
         version: 18.3.1
@@ -2173,6 +2176,9 @@ packages:
   math-intrinsics@1.1.0:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
+
+  mathjax@3.2.2:
+    resolution: {integrity: sha512-Bt+SSVU8eBG27zChVewOicYs7Xsdt40qm4+UpHyX7k0/O9NliPc+x77k1/FEsPsjKPZGJvtRZM1vO+geW0OhGw==}
 
   mathml-to-latex@1.5.0:
     resolution: {integrity: sha512-rrWn0eEvcEcdMM4xfHcSGIy+i01DX9byOdXTLWg+w1iJ6O6ohP5UXY1dVzNUZLhzfl3EGcRekWLhY7JT5Omaew==}
@@ -5389,6 +5395,8 @@ snapshots:
   marked@17.0.1: {}
 
   math-intrinsics@1.1.0: {}
+
+  mathjax@3.2.2: {}
 
   mathml-to-latex@1.5.0:
     dependencies:

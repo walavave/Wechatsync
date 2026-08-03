@@ -99,6 +99,8 @@ export default defineConfig(({ mode }) => {
     },
   },
   build: {
+    // 内容脚本共享宿主页的 document，预加载 /assets/* 会错误地请求宿主域名。
+    modulePreload: false,
     // 开发模式: 不压缩，生成 sourcemap
     minify: isDev ? false : 'esbuild',
     sourcemap: isDev ? 'inline' : false,

@@ -312,6 +312,21 @@ function isFirstTbody(element: Element): boolean {
  * 添加表格和代码块扩展规则
  */
 function addExtensionRules(turndownService: TurndownService): void {
+  // md-main 风格公式容器：HTML 平台保留 SVG，Markdown 平台恢复原始 TeX。
+  turndownService.addRule('mathFormula', {
+    filter: function(node) {
+      return node.nodeType === 1 && Boolean((node as Element).getAttribute('data-math-raw'))
+    },
+    replacement: function(_content, node) {
+      const element = node as Element
+      const tex = element.getAttribute('data-math-raw')?.trim() || ''
+      if (!tex) return ''
+      return element.getAttribute('data-math-display') === 'true'
+        ? `\n\n$$\n${tex}\n$$\n\n`
+        : `$${tex}$`
+    }
+  })
+
   // figure 元素 - 直接透传内容（常包裹 table）
   turndownService.addRule('figure', {
     filter: 'figure',
@@ -574,6 +589,17 @@ function extractLangFromClass(className: string): string {
  */
 function htmlToMarkdownSimple(html: string): string {
   let md = html
+
+  // MathJax SVG 外层保留了 TeX，用原始公式替换整个 SVG，避免输出无意义的图形文本。
+  md = md.replace(
+    /<(span|section|p)\b([^>]*\bdata-math-raw=(['"])(.*?)\3[^>]*)>[\s\S]*?<\/\1>/gi,
+    (_match, _tag, attrs, _quote, encodedTex) => {
+      // HTML entities must stay encoded until the generic tag-removal pass is complete.
+      const tex = encodedTex.trim()
+      const display = /\bdata-math-display=(['"])true\1/i.test(attrs)
+      return display ? `\n\n$$\n${tex}\n$$\n\n` : `$${tex}$`
+    }
+  )
 
   // ============ 预处理：移除微信代码块行号 ============
   // 必须在列表转换之前执行，否则 <li> 会被转成 "- "
@@ -878,13 +904,50 @@ export function htmlToMarkdownNative(html: string, options: TurndownOptions = {}
 
 // ============ Markdown → HTML ============
 
-import { marked } from 'marked'
+import { Marked } from 'marked'
+
+function escapeMathAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+const markdownParser = new Marked({
+  extensions: [
+    {
+      name: 'displayMath',
+      level: 'block',
+      start(src) {
+        return src.match(/^ {0,3}\$\$(?:[ \t]*$|[^\r\n]*\$\$)/m)?.index
+      },
+      tokenizer(src) {
+        const multilineMatch = /^ {0,3}\$\$[ \t]*\r?\n([\s\S]*?)\r?\n {0,3}\$\$[ \t]*(?:\r?\n|$)/.exec(src)
+        const singlelineMatch = /^ {0,3}\$\$([^\r\n]*?)\$\$[ \t]*(?:\r?\n|$)/.exec(src)
+        const match = multilineMatch || singlelineMatch
+        const tex = (multilineMatch?.[1] ?? singlelineMatch?.[1])?.trim()
+        if (!match || !tex) return undefined
+        return {
+          type: 'displayMath',
+          raw: match[0],
+          tex,
+        }
+      },
+      renderer(token) {
+        const tex = String(token.tex)
+        const escapedTex = escapeMathAttribute(tex)
+        return `<p class="katex-block katex-pending" data-math-display="true" data-math-raw="${escapedTex}">${escapedTex}</p>\n`
+      },
+    },
+  ],
+})
 
 /**
  * Markdown 转 HTML
  */
 export function markdownToHtml(markdown: string): string {
-  return marked.parse(markdown, { async: false }) as string
+  return markdownParser.parse(markdown, { async: false }) as string
 }
 
 /**

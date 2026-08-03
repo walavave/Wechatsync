@@ -8,17 +8,17 @@
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Chrome Extension                      │
+│                    Chrome Extension                     │
 │  ┌──────────────────────────────────────────────────┐   │
-│  │              Service Worker (Background)          │   │
+│  │              Service Worker (Background)         │   │
 │  │  ┌──────────────────────────────────────────┐    │   │
-│  │  │           Platform Adapters               │    │   │
+│  │  │           Platform Adapters              │    │   │
 │  │  │  - ZhihuAdapter                          │    │   │
 │  │  │  - JuejinAdapter                         │    │   │
 │  │  │  - ...                                   │    │   │
 │  │  └──────────────────────────────────────────┘    │   │
-│  │                      │                            │   │
-│  │                      ▼                            │   │
+│  │                      │                           │   │
+│  │                      ▼                           │   │
 │  │  ┌──────────────────────────────────────────┐    │   │
 │  │  │          RuntimeInterface                │    │   │
 │  │  │  - fetch (with cookies)                  │    │   │

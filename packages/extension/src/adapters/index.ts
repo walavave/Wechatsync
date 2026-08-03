@@ -426,7 +426,11 @@ export async function syncToPlatform(
       platformArticle = {
         ...article,
         html: content.html,
-        markdown: content.markdown,
+        // Juejin accepts standard Markdown and renders TeX itself. Preserve the
+        // extracted Markdown rather than needlessly round-tripping it through HTML.
+        markdown: platformId === 'juejin' && article.markdown.trim()
+          ? article.markdown
+          : content.markdown,
       }
     }
 

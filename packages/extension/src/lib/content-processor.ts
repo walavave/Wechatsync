@@ -621,7 +621,8 @@ function removeDataAttributes(container: HTMLElement): void {
   allElements.forEach((el) => {
     const attrs = Array.from(el.attributes)
     attrs.forEach((attr) => {
-      if (attr.name.startsWith('data-') && attr.name !== 'data-src') {
+      const preservedDataAttributes = ['data-src', 'data-math-raw', 'data-math-display']
+      if (attr.name.startsWith('data-') && !preservedDataAttributes.includes(attr.name)) {
         el.removeAttribute(attr.name)
       }
     })

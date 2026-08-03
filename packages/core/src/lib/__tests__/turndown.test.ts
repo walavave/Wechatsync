@@ -2,7 +2,7 @@
  * Turndown HTML→Markdown 转换测试
  */
 import { describe, it, expect } from 'vitest'
-import { htmlToMarkdown } from '../turndown'
+import { htmlToMarkdown, markdownToHtml } from '../turndown'
 
 describe('htmlToMarkdown', () => {
   describe('Table conversion', () => {
@@ -197,6 +197,64 @@ describe('htmlToMarkdown', () => {
   })
 
   describe('LaTeX formulas', () => {
+    it('should recognize standalone double-dollar lines as display math', () => {
+      const markdown = [
+        '公式如下：',
+        '',
+        '$$',
+        '\\begin{aligned}',
+        'a &< b \\\\',
+        'c &= d',
+        '\\end{aligned}',
+        '$$',
+        '',
+        '结束。',
+      ].join('\n')
+
+      const html = markdownToHtml(markdown)
+
+      expect(html).toContain('class="katex-block katex-pending"')
+      expect(html).toContain('data-math-display="true"')
+      expect(html).toContain('data-math-raw="\\begin{aligned}\na &amp;&lt; b \\\\\nc &amp;= d\n\\end{aligned}"')
+      expect(html).not.toContain('<p>$$</p>')
+    })
+
+    it('should allow blank lines inside standalone display math delimiters', () => {
+      const html = markdownToHtml('$$\n\nE=mc^2\n\n$$')
+
+      expect(html).toContain('data-math-display="true"')
+      expect(html).toContain('data-math-raw="E=mc^2"')
+      expect(html).not.toContain('<p>$$</p>')
+    })
+
+    it('should recognize single-line double-dollar formulas as display math', () => {
+      const html = markdownToHtml('$$m_{local}=z_{t+j+1}-z_{t+j},\\quad m_{global}=z_{goal}-z_{t+j}$$')
+
+      expect(html).toContain('class="katex-block katex-pending"')
+      expect(html).toContain('data-math-display="true"')
+      expect(html).toContain('m_{local}=z_{t+j+1}-z_{t+j}')
+      expect(html).not.toContain('<p>$$</p>')
+    })
+
+    it('should not parse double-dollar lines inside fenced code', () => {
+      const html = markdownToHtml('```text\n$$\nx+y\n$$\n```')
+
+      expect(html).toContain('<pre><code class="language-text">$$')
+      expect(html).not.toContain('data-math-display')
+    })
+
+    it('should restore inline and block formulas from MathJax SVG wrappers', () => {
+      const html = [
+        '<p>Energy <span class="katex-inline" data-math-display="false" data-math-raw="E = mc^2"><svg><path /></svg></span>。</p>',
+        '<p class="katex-block" data-math-display="true" data-math-raw="x &lt; y"><svg><path /></svg></p>',
+      ].join('')
+      const markdown = htmlToMarkdown(html)
+
+      expect(markdown).toContain('$E = mc^2$。')
+      expect(markdown).toContain('$$\nx < y\n$$')
+      expect(markdown).not.toContain('<svg')
+    })
+
     it('should convert block formula script tag', () => {
       const html = '<script type="math/tex; mode=display">E = mc^2</script>'
       const markdown = htmlToMarkdown(html)

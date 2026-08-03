@@ -17,6 +17,11 @@ import { htmlToMarkdownNative, type PreprocessConfig } from '@wechatsync/core'
 import { createLogger } from '../lib/logger'
 import { preprocessContentDOM, preprocessForPlatform, backupAndSimplifyCodeBlocks, restoreCodeBlocks, type PreprocessResult } from '../lib/content-processor'
 import { createSyncFab } from '../lib/fab'
+import { renderExtractedMath } from '../editor/mathjax'
+import {
+  loadBlogAdminEntryPayload,
+  resolveBlogAdminCoverUrl,
+} from './blog-admin-cover'
 
 const logger = createLogger('Extractor')
 
@@ -32,11 +37,31 @@ interface ExtractedArticle {
   }
 }
 
+function parseExtensionMessage(value: unknown): Record<string, any> | null {
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, any>
+    : null
+}
+
 /**
  * 提取文章内容
  */
 async function extractArticle(): Promise<ExtractedArticle | null> {
   const url = window.location.href
+
+  // astro-whono 博客后台编辑页：预览包含完整正文，CodeMirror DOM 只包含可视区。
+  const blogAdminArticle = await extractBlogAdminArticle()
+  if (blogAdminArticle) {
+    return blogAdminArticle
+  }
 
   // 微信公众号
   if (url.includes('mp.weixin.qq.com')) {
@@ -58,6 +83,96 @@ async function extractArticle(): Promise<ExtractedArticle | null> {
 
   // 通用提取 (使用 Safari Reader / Readability)
   return extractGenericArticle()
+}
+
+/**
+ * 从 blog 后台文章编辑页提取完整预览，并把 KaTeX DOM 还原成 TeX。
+ * rehype-katex 会把原始 TeX 保存在 MathML annotation 中，因此无需读取虚拟滚动的编辑器。
+ */
+async function extractBlogAdminArticle(): Promise<ExtractedArticle | null> {
+  const editorShell = document.querySelector<HTMLElement>('.admin-editor-shell')
+  const previewArticle = document.querySelector<HTMLElement>('.admin-editor-preview__article')
+  if (!editorShell || !previewArticle) return null
+
+  const titleInput = document.querySelector<HTMLInputElement>('#admin-editor-frontmatter-panel input[name="title"]')
+  const title = titleInput?.value.trim()
+    || document.querySelector<HTMLElement>('.admin-content-page-head .admin-content-heading')?.textContent?.trim()
+  if (!title) return null
+
+  const content = previewArticle.cloneNode(true) as HTMLElement
+  const renderedFormulas = Array.from(content.querySelectorAll<HTMLElement>('.katex'))
+
+  for (const formula of renderedFormulas) {
+    const tex = formula.querySelector('annotation[encoding="application/x-tex"]')?.textContent?.trim()
+    if (!tex) continue
+
+    const displayContainer = formula.closest<HTMLElement>('.katex-display')
+    const display = Boolean(displayContainer)
+    let replacementTarget = displayContainer || formula
+    let wrapperTag: 'p' | 'span' = display ? 'p' : 'span'
+
+    // 展示公式使用普通段落，避免微信编辑器在不可编辑 section 两侧插入占位空行。
+    // 公式夹在已有正文段落中时仍使用 span，避免生成嵌套 p。
+    const paragraph = displayContainer?.parentElement?.tagName === 'P'
+      ? displayContainer.parentElement
+      : null
+    if (paragraph && paragraph.querySelectorAll('.katex').length === 1) {
+      const remaining = paragraph.cloneNode(true) as HTMLElement
+      remaining.querySelector('.katex-display')?.remove()
+      if (!remaining.textContent?.trim() && !remaining.querySelector('img, video, audio, svg')) {
+        replacementTarget = paragraph
+      } else {
+        wrapperTag = 'span'
+      }
+    }
+
+    const wrapper = document.createElement(wrapperTag)
+    wrapper.className = `${display ? 'katex-block' : 'katex-inline'} katex-pending`
+    wrapper.dataset.mathDisplay = String(display)
+    wrapper.dataset.mathRaw = tex
+    wrapper.textContent = display ? '正在加载公式...' : '...'
+
+    replacementTarget.replaceWith(wrapper)
+  }
+
+  // Generate Markdown before SVG rendering: Juejin needs TeX, while WeChat
+  // receives the rendered HTML representation below.
+  const markdown = htmlToMarkdownNative(content.innerHTML)
+  await renderExtractedMath(content)
+
+  const visibleCoverInput = document.querySelector<HTMLInputElement>('#admin-editor-frontmatter-panel input[name="cover"]')
+  const visibleCover = visibleCoverInput?.value.trim()
+  const visibleSourcePath = document.querySelector<HTMLElement>('.admin-editor-frontmatter-popover__source-path')
+    ?.textContent?.trim()
+  const entryPayload = visibleCoverInput && visibleSourcePath
+    ? null
+    : await loadBlogAdminEntryPayload(window.location.href)
+  const relativeSourcePath = visibleSourcePath || entryPayload?.relativePath || ''
+
+  // 使用浏览器已解析的绝对地址，保留 Vite 开发服务器的 /@fs 文件路径。
+  for (const image of Array.from(content.querySelectorAll<HTMLImageElement>('img[src]'))) {
+    if (/^https?:/i.test(image.src)) {
+      image.setAttribute('src', image.src)
+    }
+  }
+
+  const html = content.innerHTML
+  const cover = resolveBlogAdminCoverUrl(
+    visibleCoverInput ? visibleCover || '' : entryPayload?.values?.cover || '',
+    relativeSourcePath,
+    window.location.href,
+  )
+
+  return {
+    title,
+    html,
+    markdown,
+    cover,
+    source: {
+      url: window.location.href,
+      platform: 'blog-admin',
+    },
+  }
 }
 
 /**
@@ -1017,14 +1132,11 @@ function openEditor(article: ExtractedArticle, platforms: any[], selectedPlatfor
 
   // 等待 iframe 准备好后发送数据
   const handleEditorReady = (event: MessageEvent) => {
-    try {
-      const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
-      if (data.type === 'EDITOR_READY') {
-        sendDataToEditor(article, platforms, selectedPlatformIds)
-        window.removeEventListener('message', handleEditorReady)
-      }
-    } catch (e) {
-      // ignore
+    if (event.source !== editorIframe?.contentWindow) return
+    const data = parseExtensionMessage(event.data)
+    if (data?.type === 'EDITOR_READY') {
+      sendDataToEditor(article, platforms, selectedPlatformIds)
+      window.removeEventListener('message', handleEditorReady)
     }
   }
   window.addEventListener('message', handleEditorReady)
@@ -1107,7 +1219,9 @@ function preprocessForMultiplePlatformsLocal(
  */
 window.addEventListener('message', async (event) => {
   try {
-    const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+    if (event.source !== editorIframe?.contentWindow) return
+    const data = parseExtensionMessage(event.data)
+    if (!data) return
 
     if (data.type === 'CLOSE_EDITOR') {
       closeEditor()
@@ -1138,7 +1252,7 @@ window.addEventListener('message', async (event) => {
           ...data.article,
           // 保留一份默认内容（兼容）
           html: rawHtml,
-          markdown: htmlToMarkdownNative(rawHtml),
+          markdown: data.article.markdown || htmlToMarkdownNative(rawHtml),
           // 各平台专属预处理内容
           platformContents,
         },
