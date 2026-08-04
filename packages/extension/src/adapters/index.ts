@@ -178,7 +178,10 @@ export function getPlatformPreprocessConfigs(platformIds: string[]) {
 // 缓存配置
 const AUTH_CACHE_KEY = 'authCache'
 const AUTH_CACHE_TTL_AUTHENTICATED = 5 * 60 * 1000 // 已登录：5 分钟缓存
-const AUTH_CACHE_TTL_UNAUTHENTICATED = 30 * 1000 // 未登录：30 秒缓存（用户可能随时登录）
+// Do not cache unauthenticated results. Users commonly log in in a newly opened
+// platform tab and return immediately; retaining the old result makes the UI
+// incorrectly continue to show “未登录”.
+const AUTH_CACHE_TTL_UNAUTHENTICATED = 0
 const AUTH_CHECK_CONCURRENCY = 5 // 并行检查数量
 const AUTH_CHECK_TIMEOUT = 10 * 1000 // 单个平台认证检查超时：10 秒
 const PUBLISH_TIMEOUT = 10 * 60 * 1000 // 单个平台发布超时：10 分钟（包含图片上传）

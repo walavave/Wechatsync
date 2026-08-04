@@ -144,9 +144,10 @@ async function extractBlogAdminArticle(): Promise<ExtractedArticle | null> {
   const visibleCover = visibleCoverInput?.value.trim()
   const visibleSourcePath = document.querySelector<HTMLElement>('.admin-editor-frontmatter-popover__source-path')
     ?.textContent?.trim()
-  const entryPayload = visibleCoverInput && visibleSourcePath
-    ? null
-    : await loadBlogAdminEntryPayload(window.location.href)
+  // The frontmatter dialog may be mounted with an empty/stale input while its
+  // Svelte state is still loading. Always query the editor payload as a
+  // fallback so `cover: ./...` is never lost just because the dialog is open.
+  const entryPayload = await loadBlogAdminEntryPayload(window.location.href)
   const relativeSourcePath = visibleSourcePath || entryPayload?.relativePath || ''
 
   // 使用浏览器已解析的绝对地址，保留 Vite 开发服务器的 /@fs 文件路径。
@@ -157,11 +158,64 @@ async function extractBlogAdminArticle(): Promise<ExtractedArticle | null> {
   }
 
   const html = content.innerHTML
-  const cover = resolveBlogAdminCoverUrl(
-    visibleCoverInput ? visibleCover || '' : entryPayload?.values?.cover || '',
+  const rawCover = visibleCover || entryPayload?.values?.cover || ''
+  let cover = resolveBlogAdminCoverUrl(
+    rawCover,
     relativeSourcePath,
     window.location.href,
   )
+
+  // Essay frontmatter uses ./... for images stored beside the markdown file.
+  // If the editor has not exposed source metadata, the generic resolver can
+  // otherwise resolve it against the admin route. Keep it on the blog's
+  // content-assets route so the sync dialog and upload step can fetch it.
+  if (rawCover.startsWith('./') && cover?.includes('/admin/content/')) {
+    const pageUrl = new URL(window.location.href)
+    const marker = '/admin/content/'
+    const markerIndex = pageUrl.pathname.indexOf(marker)
+    if (markerIndex >= 0) {
+      const basePath = pageUrl.pathname.slice(0, markerIndex)
+      cover = new URL(
+        `${basePath}/content-assets/essay/${rawCover.slice(2)}`,
+        pageUrl.origin,
+      ).toString()
+    }
+  }
+
+  // The public article page already resolves content-relative covers through
+  // Astro's ArticleLayout. The admin editor does not render that layout, so
+  // use its public counterpart as the authoritative cover URL when the
+  // editor metadata path is unavailable or points at a 404 asset route.
+  if (rawCover.startsWith('./')) {
+    try {
+      const pageUrl = new URL(window.location.href)
+      const marker = '/admin/content/'
+      const markerIndex = pageUrl.pathname.indexOf(marker)
+      if (markerIndex >= 0) {
+        const routeParts = pageUrl.pathname
+          .slice(markerIndex + marker.length)
+          .split('/')
+          .filter(Boolean)
+        const editIndex = routeParts.indexOf('_edit')
+        const entryId = editIndex >= 0 ? routeParts.slice(editIndex + 1).join('/') : ''
+        if (entryId) {
+          const basePath = pageUrl.pathname.slice(0, markerIndex)
+          const publicUrl = new URL(`${basePath}/archive/${entryId}/`, pageUrl.origin)
+          const response = await fetch(publicUrl.toString(), { credentials: 'include' })
+          if (response.ok) {
+            const html = await response.text()
+            const publicDocument = new DOMParser().parseFromString(html, 'text/html')
+            const publicCover = publicDocument
+              .querySelector<HTMLMetaElement>('meta[property="og:image"], meta[name="twitter:image"]')
+              ?.content.trim()
+            if (publicCover) cover = new URL(publicCover, publicUrl).toString()
+          }
+        }
+      }
+    } catch (error) {
+      logger.debug('Failed to resolve admin cover through public article:', error)
+    }
+  }
 
   return {
     title,
@@ -911,13 +965,21 @@ function readerResultToArticle(result: ReaderResult): ExtractedArticle {
 
   // 转换为 Markdown
   const markdown = htmlToMarkdownNative(processedHtml)
+  const metaCover = document.querySelector<HTMLMetaElement>('meta[property="og:image"], meta[name="twitter:image"]')
+    ?.content.trim()
+  // The rendered blog page resolves frontmatter covers into og:image. Reader
+  // can retain the original `./...` value as a non-empty but unusable URL,
+  // so prefer the page metadata whenever it is available.
+  const cover = metaCover
+    ? new URL(metaCover, window.location.href).toString()
+    : (result.leadingImage || result.mainImage)
 
   return {
     title: result.title,
     markdown,
     html: processedHtml, // 预处理后的 HTML
     summary: result.excerpt,
-    cover: result.leadingImage || result.mainImage,
+    cover,
     source: {
       url: window.location.href,
       platform: result.extractor,

@@ -212,20 +212,32 @@ export class ExtensionRuntime implements RuntimeInterface {
 
     async waitForLoad(tabId: number, timeout = 30000): Promise<void> {
       return new Promise((resolve, reject) => {
+        let settled = false
+        const finish = () => {
+          if (settled) return
+          settled = true
+          clearTimeout(timeoutId)
+          chrome.tabs.onUpdated.removeListener(listener)
+          setTimeout(resolve, 1000)
+        }
         const timeoutId = setTimeout(() => {
+          if (settled) return
+          settled = true
           chrome.tabs.onUpdated.removeListener(listener)
           reject(new Error('Tab load timeout'))
         }, timeout)
 
         const listener = (updatedTabId: number, info: chrome.tabs.TabChangeInfo) => {
           if (updatedTabId === tabId && info.status === 'complete') {
-            clearTimeout(timeoutId)
-            chrome.tabs.onUpdated.removeListener(listener)
-            // 额外等待让页面 JS 初始化
-            setTimeout(resolve, 1000)
+            finish()
           }
         }
         chrome.tabs.onUpdated.addListener(listener)
+
+        // A fast/cached page can finish before onUpdated is registered.
+        chrome.tabs.get(tabId).then(tab => {
+          if (tab.status === 'complete') finish()
+        }).catch(() => {})
       })
     },
 
@@ -243,6 +255,22 @@ export class ExtensionRuntime implements RuntimeInterface {
 
       const result = results[0]?.result as T
       return result
+    },
+
+    async executeScriptAllFrames<T, A extends unknown[]>(
+      tabId: number,
+      func: (...args: A) => T | Promise<T>,
+      args: A
+    ): Promise<T[]> {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        world: 'MAIN',
+        func: func as (...args: unknown[]) => unknown,
+        args: args as unknown[],
+      })
+      return results
+        .map(result => result.result as T | undefined)
+        .filter((result): result is T => result !== undefined)
     },
   }
 

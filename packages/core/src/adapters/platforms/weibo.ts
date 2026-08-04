@@ -79,12 +79,57 @@ export class WeiboAdapter extends CodeAdapter {
       return this.userConfig
     }
 
+    const currentUser = await this.getCurrentUser()
+    if (currentUser) {
+      this.userConfig = currentUser
+      return currentUser
+    }
+
+    return this.getUserConfigFromLegacyEditor()
+  }
+
+  /** Current Weibo web API; the legacy editor page now redirects to weibo.com. */
+  private async getCurrentUser(): Promise<WeiboUserConfig | null> {
+    try {
+      const response = await this.runtime.fetch('https://weibo.com/ajax/profile/me', {
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json, text/plain, */*',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+      })
+      if (!response.ok) return null
+
+      const payload = await response.json() as {
+        data?: { user?: Record<string, unknown> } | Record<string, unknown>
+        user?: Record<string, unknown>
+      }
+      const data = payload.data as Record<string, unknown> | undefined
+      const user = (data?.user as Record<string, unknown> | undefined) || data || payload.user
+      if (!user) return null
+
+      const uid = user.id ?? user.uid ?? user.idstr
+      if (!uid) return null
+
+      return {
+        uid: String(uid),
+        nick: String(user.screen_name ?? user.nick ?? user.name ?? ''),
+        avatar_large: String(user.avatar_large ?? user.profile_image_url ?? ''),
+      }
+    } catch (error) {
+      logger.debug('Failed to get current user from API:', error)
+      return null
+    }
+  }
+
+  /** Compatibility fallback for accounts still served the legacy editor shell. */
+  private async getUserConfigFromLegacyEditor(): Promise<WeiboUserConfig | null> {
     const response = await this.runtime.fetch('https://card.weibo.com/article/v5/editor', {
       credentials: 'include',
     })
     const html = await response.text()
 
-    const configMatch = html.match(/config:\s*JSON\.parse\('(.+?)'\)/)
+    const configMatch = html.match(/config:\s*JSON\.parse\('((?:\\.|[^'])*)'\)/s)
     if (!configMatch) {
       logger.error('Failed to find config in HTML')
       return null

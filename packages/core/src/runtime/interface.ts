@@ -100,6 +100,12 @@ export interface RuntimeInterface {
       func: (...args: A) => T | Promise<T>,
       args: A
     ): Promise<T>
+    /** 在 tab 的所有 frame 中执行，返回每个可访问 frame 的结果 */
+    executeScriptAllFrames?<T, A extends unknown[]>(
+      tabId: number,
+      func: (...args: A) => T | Promise<T>,
+      args: A
+    ): Promise<T[]>
   }
 
   /**

@@ -77,7 +77,9 @@ export function resolveBlogAdminCoverUrl(
   const normalizedSource = relativeSourcePath.trim().replace(/\\/g, '/')
   const contentMarker = 'src/content/'
   const contentIndex = normalizedSource.indexOf(contentMarker)
-  if (contentIndex < 0) return new URL(cover, url).toString()
+  if (contentIndex < 0) {
+    return new URL(cover, url).toString()
+  }
 
   const contentRelativePath = normalizedSource.slice(contentIndex + contentMarker.length)
   const sourceDirectory = contentRelativePath.includes('/')
