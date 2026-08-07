@@ -34,4 +34,24 @@ describe('Weibo authentication', () => {
     })
     expect(requestedUrls).toEqual(['https://weibo.com/ajax/profile/me'])
   })
+
+  it('does not request the retired editor page when the profile endpoint is unavailable', async () => {
+    const requestedUrls: string[] = []
+    const runtime = {
+      type: 'extension',
+      fetch: async (url: string) => {
+        requestedUrls.push(url)
+        return new Response(null, { status: 404 })
+      },
+      cookies: {},
+      storage: {},
+      session: {},
+      dom: {},
+    } as unknown as RuntimeInterface
+    const adapter = new WeiboAdapter()
+    await adapter.init(runtime)
+
+    await expect(adapter.checkAuth()).resolves.toMatchObject({ isAuthenticated: false })
+    expect(requestedUrls).toEqual(['https://weibo.com/ajax/profile/me'])
+  })
 })

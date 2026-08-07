@@ -56,7 +56,16 @@ export async function fetchRemoteConfig(): Promise<void> {
       headers: { Accept: 'application/json' },
     })
     if (!response.ok) {
-      logger.warn('Config fetch failed:', response.status)
+      if (response.status === 404) {
+        // The optional remote banner file may be removed without affecting the extension.
+        await chrome.storage.local.set({
+          [STORAGE_KEY_BANNERS]: [],
+          [STORAGE_KEY_LAST_FETCH]: Date.now(),
+        })
+        logger.debug('Remote config is unavailable (404)')
+      } else {
+        logger.warn('Config fetch failed:', response.status)
+      }
       return
     }
     const config: RemoteConfig = await response.json()

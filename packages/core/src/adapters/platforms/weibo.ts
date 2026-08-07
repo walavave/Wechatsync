@@ -71,9 +71,7 @@ export class WeiboAdapter extends CodeAdapter {
     }
   }
 
-  /**
-   * 获取用户配置 (从编辑器页面解析)
-   */
+  /** 获取当前登录用户配置。 */
   private async getUserConfig(): Promise<WeiboUserConfig | null> {
     if (this.userConfig) {
       return this.userConfig
@@ -82,10 +80,9 @@ export class WeiboAdapter extends CodeAdapter {
     const currentUser = await this.getCurrentUser()
     if (currentUser) {
       this.userConfig = currentUser
-      return currentUser
     }
 
-    return this.getUserConfigFromLegacyEditor()
+    return this.userConfig
   }
 
   /** Current Weibo web API; the legacy editor page now redirects to weibo.com. */
@@ -118,41 +115,6 @@ export class WeiboAdapter extends CodeAdapter {
       }
     } catch (error) {
       logger.debug('Failed to get current user from API:', error)
-      return null
-    }
-  }
-
-  /** Compatibility fallback for accounts still served the legacy editor shell. */
-  private async getUserConfigFromLegacyEditor(): Promise<WeiboUserConfig | null> {
-    const response = await this.runtime.fetch('https://card.weibo.com/article/v5/editor', {
-      credentials: 'include',
-    })
-    const html = await response.text()
-
-    const configMatch = html.match(/config:\s*JSON\.parse\('((?:\\.|[^'])*)'\)/s)
-    if (!configMatch) {
-      logger.error('Failed to find config in HTML')
-      return null
-    }
-
-    try {
-      const configJson = configMatch[1].replace(/\\'/g, "'").replace(/\\\\/g, '\\')
-      const config = JSON.parse(configJson)
-
-      if (!config.uid) {
-        return null
-      }
-
-      this.userConfig = {
-        uid: String(config.uid),
-        nick: config.nick || '',
-        avatar_large: config.avatar_large || '',
-      }
-
-      logger.debug('User config:', this.userConfig)
-      return this.userConfig
-    } catch (e) {
-      logger.error('Failed to parse config:', e)
       return null
     }
   }
