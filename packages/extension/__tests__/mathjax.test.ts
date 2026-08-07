@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { applyMathJaxSvgLayout, normalizeMathJaxTex, reflectSvgPathData, reflectSvgTransform } from '../src/editor/mathjax'
+import { applyMathJaxSvgLayout, normalizeMathJaxTex, reflectSvgPathData, reflectSvgTransform } from '../src/editor/mathjax.ts'
 
 describe('MathJax SVG reflection', () => {
   it('bakes the y-axis reflection into path coordinates', () => {
@@ -45,5 +45,11 @@ describe('MathJax SVG layout', () => {
 
   it('omits quad spacing from MathJax SVG input', () => {
     expect(normalizeMathJaxTex('a\\quad b \\qquad c')).toBe('a b \\qquad c')
+  })
+
+  it('prevents WeChat from expanding spacing after mathematical commas', () => {
+    expect(normalizeMathJaxTex('a,b')).toBe('a\\mathord{,}b')
+    expect(normalizeMathJaxTex(String.raw`u=\frac{1,2,\dots,N}{N+1},q_{\mathcal{N}}=\text{Normal}(0,1).\text{icdf}(u)`))
+      .toBe(String.raw`u=\frac{1\mathord{,}2\mathord{,}\dots\mathord{,}N}{N+1}\mathord{,}q_{\mathcal{N}}=\text{Normal}(0\mathord{,}1).\text{icdf}(u)`)
   })
 })

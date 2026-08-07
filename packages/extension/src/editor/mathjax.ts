@@ -170,7 +170,20 @@ export function applyMathJaxSvgLayout(svg: SVGSVGElement): void {
 }
 
 export function normalizeMathJaxTex(tex: string): string {
-  return tex.replace(/\\quad\b/g, '')
+  const withoutQuad = tex.replace(/\\quad\b/g, '')
+
+  // MathJax emits `,` as a punctuation operator. WeChat's SVG sanitizer can
+  // incorrectly expand the spacing after that operator, leaving a large gap
+  // and clipping the rest of an inline formula. Mark mathematical commas as
+  // ordinary operators explicitly. Commas inside \text{...} are prose and
+  // must remain untouched.
+  const textGroups: string[] = []
+  const protectedText = withoutQuad.replace(/\\text\{([^{}]*)\}/g, (group) => {
+    textGroups.push(group)
+    return `\u0000${textGroups.length - 1}\u0000`
+  })
+  const normalized = protectedText.replace(/,/g, '\\mathord{,}')
+  return normalized.replace(/\u0000(\d+)\u0000/g, (_, index) => textGroups[Number(index)])
 }
 
 async function loadMathJax(): Promise<MathJaxApi> {
